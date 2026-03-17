@@ -1,30 +1,35 @@
 const express = require("express");
 const cors = require("cors");
-const { chromium } = require("playwright");
+const puppeteer = require("puppeteer");
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
-// Active sessions
 const sessions = {};
 
 async function getOrCreateSession(sessionId) {
   if (sessions[sessionId]) return sessions[sessionId];
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--no-first-run",
+      "--no-zygote",
+      "--single-process"
+    ]
   });
 
-  const context = await browser.newContext({
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    viewport: { width: 1280, height: 800 }
-  });
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1280, height: 800 });
+  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
-  const page = await context.newPage();
   sessions[sessionId] = { browser, page };
-  console.log(`Created session: ${sessionId}`);
+  console.log(`Session created: ${sessionId}`);
   return sessions[sessionId];
 }
 
@@ -33,7 +38,6 @@ async function closeSession(sessionId) {
   if (!s) return;
   try { await s.browser.close(); } catch {}
   delete sessions[sessionId];
-  console.log(`Closed session: ${sessionId}`);
 }
 
 app.post("/execute", async (req, res) => {
@@ -58,19 +62,20 @@ app.post("/execute", async (req, res) => {
 
     else if (tool === "click") {
       let clicked = false;
+      // Try CSS selector
       try {
-        await page.getByText(input.selector, { exact: false }).first().click({ timeout: 4000 });
+        await page.click(input.selector, { timeout: 4000 });
         clicked = true;
       } catch {}
+      // Try XPath by text
       if (!clicked) {
         try {
-          await page.click(input.selector, { timeout: 4000 });
-          clicked = true;
-        } catch {}
-      }
-      if (!clicked) {
-        try {
-          await page.getByRole("button", { name: input.selector }).first().click({ timeout: 3000 });
+          await page.evaluate((text) => {
+            const els = [...document.querySelectorAll("button, a, [role='button']")];
+            const el = els.find(e => e.textContent.trim().toLowerCase().includes(text.toLowerCase()));
+            if (el) el.click();
+            else throw new Error("not found");
+          }, input.selector);
           clicked = true;
         } catch {}
       }
@@ -79,15 +84,11 @@ app.post("/execute", async (req, res) => {
 
     else if (tool === "type") {
       try {
-        await page.fill(input.selector, input.text, { timeout: 5000 });
+        await page.$eval(input.selector, el => el.value = "");
+        await page.type(input.selector, input.text, { delay: 30 });
         result = `Typed "${input.text}" into ${input.description}`;
       } catch {
-        try {
-          await page.locator(input.selector).first().fill(input.text, { timeout: 3000 });
-          result = `Typed "${input.text}" into ${input.description}`;
-        } catch {
-          result = `Could not find input: ${input.description}`;
-        }
+        result = `Could not find input: ${input.description}`;
       }
     }
 
@@ -99,7 +100,7 @@ app.post("/execute", async (req, res) => {
 
     else if (tool === "extract") {
       try {
-        const text = await page.locator(input.selector).first().innerText({ timeout: 5000 });
+        const text = await page.$eval(input.selector, el => el.innerText);
         result = text.slice(0, 2000);
       } catch {
         const body = await page.evaluate(() => document.body.innerText);
@@ -108,7 +109,7 @@ app.post("/execute", async (req, res) => {
     }
 
     else if (tool === "wait") {
-      await page.waitForTimeout(Math.min(input.seconds * 1000, 10000));
+      await new Promise(r => setTimeout(r, Math.min(input.seconds * 1000, 10000)));
       result = `Waited ${input.seconds}s`;
     }
 
