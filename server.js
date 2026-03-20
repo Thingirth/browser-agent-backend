@@ -1,27 +1,19 @@
 const express = require("express");
 const cors = require("cors");
-const puppeteer = require("puppeteer");
+const puppeteer = require("puppeteer-core");
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
+const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN;
 const sessions = {};
 
 async function getOrCreateSession(sessionId) {
   if (sessions[sessionId]) return sessions[sessionId];
 
-  const browser = await puppeteer.launch({
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--no-first-run",
-      "--no-zygote",
-      "--single-process"
-    ]
+  const browser = await puppeteer.connect({
+    browserWSEndpoint: `wss://production-sfo.browserless.io?token=${BROWSERLESS_TOKEN}`,
   });
 
   const page = await browser.newPage();
@@ -62,19 +54,16 @@ app.post("/execute", async (req, res) => {
 
     else if (tool === "click") {
       let clicked = false;
-      // Try CSS selector
       try {
         await page.click(input.selector, { timeout: 4000 });
         clicked = true;
       } catch {}
-      // Try XPath by text
       if (!clicked) {
         try {
           await page.evaluate((text) => {
             const els = [...document.querySelectorAll("button, a, [role='button']")];
             const el = els.find(e => e.textContent.trim().toLowerCase().includes(text.toLowerCase()));
-            if (el) el.click();
-            else throw new Error("not found");
+            if (el) el.click(); else throw new Error("not found");
           }, input.selector);
           clicked = true;
         } catch {}
