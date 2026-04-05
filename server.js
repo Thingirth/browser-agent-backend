@@ -229,3 +229,23 @@ app.get("/health", (req, res) => res.json({ status: "ok" }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
+
+// Live view URL endpoint - returns Browserless live view URL for the session
+app.get("/live-url", async (req, res) => {
+  const { sessionId } = req.query;
+  const s = sessions[sessionId];
+  if (!s) return res.json({ url: null });
+  try {
+    // Browserless live view URL format
+    const token = process.env.BROWSERLESS_TOKEN;
+    const wsEndpoint = s.browser.wsEndpoint();
+    const sessionIdMatch = wsEndpoint.match(/\/([^/?]+)\?/);
+    const blessSessionId = sessionIdMatch ? sessionIdMatch[1] : null;
+    const liveUrl = blessSessionId
+      ? `https://production-sfo.browserless.io/live?token=${token}&session=${blessSessionId}`
+      : null;
+    res.json({ url: liveUrl });
+  } catch {
+    res.json({ url: null });
+  }
+});
