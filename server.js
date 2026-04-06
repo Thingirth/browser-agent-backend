@@ -28,7 +28,20 @@ async function getOrCreateSession(sessionId) {
     'Accept-Language': 'en-US,en;q=0.9',
   });
 
-  sessions[sessionId] = { browser, page };
+  // Keep session alive with periodic screenshots
+  const keepAlive = setInterval(async () => {
+    try {
+      if (sessions[sessionId]) {
+        await page.evaluate(() => true); // ping
+      } else {
+        clearInterval(keepAlive);
+      }
+    } catch {
+      clearInterval(keepAlive);
+    }
+  }, 20000);
+
+  sessions[sessionId] = { browser, page, keepAlive };
   console.log(`Session created: ${sessionId}`);
   return sessions[sessionId];
 }
@@ -36,6 +49,7 @@ async function getOrCreateSession(sessionId) {
 async function closeSession(sessionId) {
   const s = sessions[sessionId];
   if (!s) return;
+  if (s.keepAlive) clearInterval(s.keepAlive);
   try { await s.browser.close(); } catch {}
   delete sessions[sessionId];
 }
